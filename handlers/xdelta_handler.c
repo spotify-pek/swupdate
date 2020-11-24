@@ -1,6 +1,5 @@
 /*
- * (C) Duck the Copyright 2020
- * Janitor at spotify
+ * (C) Spotify Copyright 2020
  *
  * SPDX-License-Identifier:     BSD
  */
@@ -243,7 +242,9 @@ int xdelta_handler(img_type *img, void __attribute__ ((__unused__)) *data)
         goto cleanup;
     }
 
-    // main processing loop
+    /* Main processing loop modeled after 
+     * https://github.com/jmacd/xdelta/blob/wiki/ProgrammingGuide.md#inputoutput-loop
+     */
     do {
         // Read patch file data
         if ((ret = read_from_patch_file(&handle, &stream)) != 0) {
