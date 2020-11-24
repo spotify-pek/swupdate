@@ -9,9 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+
 #include "handler.h"
 #include "swupdate.h"
 #include "util.h"
+#include "progress.h"
 
 
 /* XDelta is using autoconf/autoheader to generate certain defines. 
@@ -41,6 +47,7 @@ typedef struct handler_data {
     FILE* patch_file;
     uint8_t* patch_buf;
     size_t patch_buf_sz;
+    size_t expected_dst_size;
 } handler_data;
 
 static void
@@ -73,12 +80,40 @@ set_default_xd3_config(xd3_config* config, xd3_source* source) {
     source->curblkno = (xoff_t) -1;
 }
 
+static size_t
+get_file_size(const char* path) {
+    size_t size = 0;
+    struct stat sbuf = {0};
+    FILE* f = NULL;
+
+    if((f = fopen(path, "r")) != NULL) {
+        if(fstat(fileno(f), &sbuf) == 0) {
+            if (S_ISREG(sbuf.st_mode)) {
+                size = sbuf.st_size;
+            } else if (S_ISBLK(sbuf.st_mode)) {
+                ioctl(fileno(f), BLKGETSIZE64, &size);
+            };
+        }
+        fclose(f);
+        return size;
+    }
+    ERROR("Failed to obtain file size of %s error %s", path, strerror(errno));
+    return 0;
+}
+
 static int
 read_sw_description_extras(img_type *img, handler_data* handle) {
+    char* dst_file_sz_str = NULL;
+
     // source file name aka "old file" name
     if ((handle->src_filename = dict_get_value(&img->properties, "xdeltasrc")) == NULL) {
         ERROR("Property xdeltasrc is missing in sw-description");
         return -1;
+    }
+    if ((dst_file_sz_str = dict_get_value(&img->properties, "dst_size")) == NULL) {
+        handle->expected_dst_size = get_file_size(handle->src_filename);
+    } else {
+        handle->expected_dst_size = strtoul(dst_file_sz_str, NULL, 10);
     }
     return 0;
 }
@@ -150,6 +185,18 @@ write_to_output_file(handler_data* handle, xd3_stream* stream) {
     return 0;
 }
 
+static void
+report_update_progress(handler_data* handle, xd3_stream* stream) {
+    static unsigned int prev_perc = 0; /* ! static */
+    if (handle->expected_dst_size != 0) {
+        unsigned int perc = ((float)(stream->total_out) / handle->expected_dst_size) * 100;
+        if (perc != prev_perc) {
+            swupdate_progress_update(perc);
+            prev_perc = perc;
+        }
+    }
+}
+
 // Implementation
 int xdelta_handler(img_type *img, void __attribute__ ((__unused__)) *data)
 {
@@ -215,6 +262,7 @@ process:
                 if ((ret = write_to_output_file(&handle, &stream)) != 0) {
                     goto cleanup;
                 }
+                report_update_progress(&handle, &stream);
                 goto process;
             }
 
