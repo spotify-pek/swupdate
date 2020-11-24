@@ -38,7 +38,7 @@ typedef struct handler_data {
     char* patch_filename;
     FILE* src_file;
     FILE* dst_file;
-	FILE* patch_file;
+    FILE* patch_file;
     uint8_t* patch_buf;
     size_t patch_buf_sz;
 } handler_data;
@@ -153,8 +153,8 @@ write_to_output_file(handler_data* handle, xd3_stream* stream) {
 // Implementation
 int xdelta_handler(img_type *img, void __attribute__ ((__unused__)) *data)
 {
-	int xd3ret, ret = 0;
-	xd3_stream stream;
+    int xd3ret, ret = 0;
+    xd3_stream stream;
     xd3_config config;
     xd3_source source;
     handler_data handle;
@@ -240,8 +240,8 @@ process:
 
 cleanup:
     if (ret != 0) {
-		ERROR("XDelta3 have failed us! %d %s", ret, strerror(errno));
-	} else {
+        ERROR("XDelta3 have failed us! %d %s", ret, strerror(errno));
+    } else {
         INFO("XDelta3 patch is DONE! wrote %llu to %s ret %d", stream.total_out, handle.dst_filename, ret);
     }
 
@@ -253,7 +253,7 @@ cleanup:
     xd3_close_stream(&stream);
     xd3_free_stream(&stream);
 
-	return ret;
+    return ret;
 }
 
 __attribute__((constructor))
