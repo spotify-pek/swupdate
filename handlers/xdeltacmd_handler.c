@@ -25,7 +25,7 @@ int run_cmd_with_output(const char* cmd) {
 	/* Open the command for reading. */
 	fp = popen(cmd, "r");
 	if (fp == NULL) {
-		ERROR("Failed to run command %s\n", cmd);
+		ERROR("Failed to run command %s", cmd);
 		return -1;
 	}
 
@@ -66,5 +66,5 @@ static int xdeltacmd_handler(struct img_type *img, void __attribute__ ((__unused
 __attribute__((constructor))
 void xdeltacmd_handler_init(void)
 {
-		register_handler("xdelta_image", xdeltacmd_handler, IMAGE_HANDLER, NULL);
+	register_handler("xdeltacmd_image", xdeltacmd_handler, IMAGE_HANDLER, NULL);
 }
