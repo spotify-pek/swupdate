@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -17,6 +19,7 @@
 #include "swupdate.h"
 #include "util.h"
 #include "progress.h"
+#include "bsdqueue.h"
 
 
 /* XDelta is using autoconf/autoheader to generate certain defines. 
@@ -29,14 +32,25 @@
 
 #define DEFAULT_GETBLK_SIZE (1U << 20) /* 1MB */
 #define DEFAULT_INPUT_WINDOW_SIZE (1U << 19) /* 512 Kb. Smaller window would lead to the less memory usage but more fseeks */
+#define DEFAULT_LRU_SIZE (32)
+#define DEFAULT_BLOCK_SIZE (DEFAULT_GETBLK_SIZE / DEFAULT_LRU_SIZE)
+
+#define TAILQ_PROMOTE(head, elm, field) do { TAILQ_REMOVE(head, elm, field); \
+                                             TAILQ_INSERT_HEAD(head, elm, field); \
+                                        } while(0)
 
 typedef struct img_type img_type;
 
-// Forward declarations
-void xdelta_handler_init(void);
-int xdelta_handler(struct img_type *img, void __attribute__ ((__unused__)) *data);
+typedef TAILQ_HEAD(head_s, node) head_t;
 
-// Helpers
+/* LRU cache for source blocks */
+typedef struct node {
+    xoff_t blockno;
+    size_t size;
+    uint8_t* block;
+    TAILQ_ENTRY(node) nodes;
+} node_t;
+
 typedef struct handler_data {
     char* src_filename;
     char* dst_filename;
@@ -44,11 +58,19 @@ typedef struct handler_data {
     FILE* src_file;
     FILE* dst_file;
     FILE* patch_file;
-    uint8_t* patch_buf;
-    size_t patch_buf_sz;
-    size_t expected_dst_size;
+    uint8_t* patch_buf; /* contains segments of patch file data */
+    size_t patch_buf_sz; /* size of the patch segment buffer */
+    size_t expected_dst_size; /* used for progress reporting */
+    size_t src_size;
+    head_t head; /* LRU cache */
 } handler_data;
 
+
+// Forward declarations
+void xdelta_handler_init(void);
+int xdelta_handler(struct img_type *img, void __attribute__ ((__unused__)) *data);
+
+// xdelta callback functions
 static void
 main_free(void __attribute__ ((__unused__)) *opaque, void *ptr) { free (ptr); }
 
@@ -61,6 +83,81 @@ main_alloc(void __attribute__ ((__unused__)) *opaque, size_t  items, usize_t  si
   return r;
 }
 
+/* XDelta is often request the same blocks of source data
+   due to the nature of how VCDIFF patch is working. This
+   results in substantial amount of fseek calls for the 
+   same source file segment. We are using simple LRU cache
+   to minimize disk io when possible. This speeds up patch
+   application on 1GB system partion more than twice
+*/
+static int
+init_block_cache(head_t* head) {
+    TAILQ_INIT(head);
+
+    for (int i = 0; i < DEFAULT_LRU_SIZE; i++) {
+        node_t* e = malloc(sizeof(node_t));
+        if (e == NULL) {
+            ERROR("cache malloc failed size %d", sizeof(node_t));
+            return -1;
+        }
+        memset(e, 0, sizeof(node_t));
+        if ((e->block = malloc(DEFAULT_BLOCK_SIZE)) == NULL) {
+            ERROR("cache malloc failed size %d", DEFAULT_BLOCK_SIZE);
+            return -1;
+        }
+        e->blockno = (xoff_t) -1;
+        e->size = DEFAULT_BLOCK_SIZE;
+        TAILQ_INSERT_TAIL(head, e, nodes);
+        e = NULL;
+    }
+    return 0;
+}
+
+/* look for block in cache or read from file on miss */
+static node_t*
+get_block(handler_data* handle, xd3_source* source) {
+    head_t* head = &handle->head;
+    xoff_t offset = source->blksize * source->getblkno;
+    node_t *e = NULL, *next = NULL;
+    
+    /* check cache */
+    TAILQ_FOREACH_SAFE(e, head, nodes, next) {
+        if (e->blockno == source->getblkno) {
+            TAILQ_PROMOTE(head, e, nodes);
+            return e;
+        }
+    }
+    /* cache miss, read from file */
+    e = TAILQ_LAST(head, head_s);
+    TAILQ_PROMOTE(head, e, nodes);
+
+    if (fseek(handle->src_file, offset, SEEK_SET) != 0) {
+        ERROR("fseek failed for source file %s position %llu error %s",
+                handle->src_filename, offset, strerror(errno));
+        return NULL;
+    }
+    e->size = fread((void*)e->block, sizeof(e->block[0]), source->blksize, handle->src_file);
+    if(ferror(handle->src_file)) {
+        ERROR("fread on source file %s failed %s", handle->src_filename, strerror(errno));
+        return NULL;
+    }
+    e->blockno = source->getblkno;
+    return e;
+}
+
+static void
+free_block_cache(head_t* head) {
+    node_t* e = NULL;
+    while (head && !TAILQ_EMPTY(head)) {
+        e = TAILQ_FIRST(head);
+        TAILQ_REMOVE(head, e, nodes);
+        if (e->block) { free(e->block); }
+        free(e);
+        e = NULL;
+    }
+}
+
+// Helpers
 static void 
 set_default_xd3_config(xd3_config* config, xd3_source* source) {
     xd3_init_config(config, 0);
@@ -74,28 +171,33 @@ set_default_xd3_config(xd3_config* config, xd3_source* source) {
     config->getblk = NULL; /* We use XD3_GETSRCBLK instead */
 
     // source defaults
-    source->blksize = DEFAULT_GETBLK_SIZE;
+    source->blksize = DEFAULT_BLOCK_SIZE;
+    source->onblk = DEFAULT_BLOCK_SIZE;
+    source->onlastblk = DEFAULT_BLOCK_SIZE;
+    source->max_blkno = DEFAULT_LRU_SIZE - 1;
+    source->max_winsize = DEFAULT_GETBLK_SIZE;
     source->curblk = malloc(source->blksize);
     source->curblkno = (xoff_t) -1;
 }
 
 static size_t
-get_file_size(const char* path) {
-    size_t size = 0;
+get_file_size(char* path) {
+    uint64_t size = 0;
     struct stat sbuf = {0};
-    FILE* f = NULL;
+    int fd;
 
-    if((f = fopen(path, "r")) != NULL) {
-        if(fstat(fileno(f), &sbuf) == 0) {
+    if((fd = open(path, O_RDONLY)) >= 0) {
+        if(fstat(fd, &sbuf) == 0) {
             if (S_ISREG(sbuf.st_mode)) {
                 size = sbuf.st_size;
             } else if (S_ISBLK(sbuf.st_mode)) {
-                ioctl(fileno(f), BLKGETSIZE64, &size);
+                ioctl(fd, BLKGETSIZE64, &size);
             };
         }
-        fclose(f);
+        close(fd);
         return size;
     }
+
     ERROR("Failed to obtain file size of %s error %s", path, strerror(errno));
     return 0;
 }
@@ -109,11 +211,13 @@ read_sw_description_extras(img_type *img, handler_data* handle) {
         ERROR("Property xdeltasrc is missing in sw-description");
         return -1;
     }
-    if ((dst_file_sz_str = dict_get_value(&img->properties, "dst_size")) == NULL) {
-        handle->expected_dst_size = get_file_size(handle->src_filename);
-    } else {
+    handle->src_size = get_file_size(handle->src_filename);
+    if ((dst_file_sz_str = dict_get_value(&img->properties, "dst_size")) != NULL) {
         handle->expected_dst_size = strtoul(dst_file_sz_str, NULL, 10);
+    } else {
+        handle->expected_dst_size = handle->src_size; /* some approximation */
     }
+
     return 0;
 }
 
@@ -154,22 +258,15 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
 }
 
 static int
-read_from_src_file(handler_data* handle, xd3_source* source) {
-    int ret;
-    xoff_t offset = source->blksize * source->getblkno;
-
-    if ((ret = fseek(handle->src_file, offset, SEEK_SET)) != 0) {
-        ERROR("fseek failed for source file %s position %llu error %s",
-                handle->src_filename, offset, strerror(errno));
-        return errno;
+feed_src_block(handler_data* handle, xd3_source* source) {
+    node_t* e = get_block(handle, source);
+    if (e) {
+        source->onblk = e->size;
+        source->curblk = e->block;
+        source->curblkno = e->blockno;
+        return 0;
     }
-    source->onblk = fread((void*)source->curblk, sizeof(source->curblk[0]), source->blksize, handle->src_file);
-    if(ferror(handle->src_file)) {
-        ERROR("fread on source file %s failed %s", handle->src_filename, strerror(errno));
-        return errno;
-    }
-    source->curblkno = source->getblkno;
-    return 0;
+    return -1;
 }
 
 static int
@@ -189,9 +286,12 @@ report_update_progress(handler_data* handle, xd3_stream* stream) {
     static unsigned int prev_perc = 0; /* ! static */
     if (handle->expected_dst_size != 0) {
         unsigned int perc = ((float)(stream->total_out) / handle->expected_dst_size) * 100;
+        perc = max(perc, 0);
+        perc = min(perc, 100);
         if (perc != prev_perc) {
             swupdate_progress_update(perc);
             prev_perc = perc;
+            INFO("Patch progress %d%% bytes written %llu expected %u", perc, stream->total_out, handle->expected_dst_size);
         }
     }
 }
@@ -218,6 +318,11 @@ int xdelta_handler(img_type *img, void __attribute__ ((__unused__)) *data)
     }
     INFO("Starting XDelta diff from %s to %s with %s", handle.src_filename, handle.dst_filename, handle.patch_filename);
 
+    // Initialize block cache
+    if((ret = init_block_cache(&handle.head)) != 0) {
+        goto cleanup;
+    }
+
     // Open all relevant files
     if ((ret = open_files(img, &handle)) != 0) {
         goto cleanup;
@@ -229,7 +334,12 @@ int xdelta_handler(img_type *img, void __attribute__ ((__unused__)) *data)
         ERROR("xd3_config_stream failed %d", ret);
         goto cleanup;
     }
-    if ((ret = xd3_set_source(&stream, &source) != 0)) {
+    if (handle.src_size) { // if we know source size, tell it to the xdelta
+        ret = xd3_set_source_and_size(&stream, &source, handle.src_size);
+    } else {
+        ret = xd3_set_source(&stream, &source);
+    }
+    if (ret != 0) {
         ERROR("xd3_set_source failed %d", ret);
         goto cleanup;
     }
@@ -269,7 +379,7 @@ process:
 
             case XD3_GETSRCBLK: /* need data from the source file */
             {
-                if ((ret = read_from_src_file(&handle, &source)) != 0) {
+                if ((ret = feed_src_block(&handle, &source)) != 0) {
                     goto cleanup;
                 }
                 goto process;
@@ -294,14 +404,13 @@ cleanup:
         INFO("XDelta3 patch is DONE! wrote %llu to %s ret %d", stream.total_out, handle.dst_filename, ret);
     }
 
-    if (handle.patch_buf) { free(handle.patch_buf); }
-    if (source.curblk) { free((void*)source.curblk); }
     if (handle.src_file) { fclose(handle.src_file); }
     if (handle.dst_file) { fclose(handle.dst_file); }
     if (handle.patch_file) { fclose(handle.patch_file); }
+    if (handle.patch_buf) { free(handle.patch_buf); }
     xd3_close_stream(&stream);
     xd3_free_stream(&stream);
-
+    free_block_cache(&handle.head);
     return ret;
 }
 
