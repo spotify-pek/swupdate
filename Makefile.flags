@@ -94,7 +94,7 @@ export SYSROOT=$(CONFIG_SYSROOT)
 endif
 
 # Links always pthread
-LDLIBS += pthread
+LDLIBS += pthread xdelta3 lzma
 # lua
 ifneq ($(CONFIG_LUA),)
 LDFLAGS_swupdate += -Wl,-E
