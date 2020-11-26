@@ -23,9 +23,9 @@
 
 
 /* XDelta is using autoconf/autoheader to generate certain defines. 
-   It has to be included prior to xdelta header. If you know a better way
-   of carying over generated config.h over from the other package - let me know.
-*/
+ * It has to be included prior to xdelta header. If you know a better way
+ * of carying over generated config.h over from the other package - let me know.
+ */
 #include <xdelta/config.h>
 #include <xdelta/xdelta3.h>
 
@@ -35,6 +35,7 @@
 #define DEFAULT_LRU_SIZE (32)
 #define DEFAULT_BLOCK_SIZE (DEFAULT_GETBLK_SIZE / DEFAULT_LRU_SIZE)
 
+/* Helper macro that moves last element of the queue to front */
 #define TAILQ_PROMOTE(head, elm, field) do { TAILQ_REMOVE(head, elm, field); \
                                              TAILQ_INSERT_HEAD(head, elm, field); \
                                         } while(0)
@@ -84,11 +85,11 @@ main_alloc(void __attribute__ ((__unused__)) *opaque, size_t  items, usize_t  si
 }
 
 /* XDelta is often request the same blocks of source data
-   due to the nature of how VCDIFF patch is working. This
-   results in substantial amount of fseek calls for the 
-   same source file segment. We are using simple LRU cache
-   to minimize disk io when possible. This speeds up patch
-   application on 1GB system partion more than twice
+ * due to the nature of how VCDIFF patch is constructed. This
+ * results in substantial amount of fseek calls for the same 
+ * source file segment. We are using simple LRU cache to
+ * minimize disk io when possible. This speeds up patch
+ * application on 1GB system partion more than twice
 */
 static int
 init_block_cache(head_t* head) {
@@ -113,7 +114,13 @@ init_block_cache(head_t* head) {
     return 0;
 }
 
-/* look for block in cache or read from file on miss */
+/* Main LRU cache access function.
+ * On cache hit, accessed element moves to the front of the queue.
+ * On cache miss, tail element (least recently used) is replaced
+ * with a new block of data from the soruce file and moved to front.
+ * When this happens, allocated memory region of last element is reused
+ * to avoid unnecessary free/malloc.
+ */
 static node_t*
 get_block(handler_data* handle, xd3_source* source) {
     head_t* head = &handle->head;
