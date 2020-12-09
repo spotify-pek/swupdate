@@ -189,10 +189,6 @@ static void process_notifier (RECOVERY_STATUS status, int event, int level, cons
 {
 	(void)level;
 
-	/* Check just in case a process want to send an info outside */
-	if (status != SUBPROCESS)
-	       return;
-
 	switch (event) {
 	case (CANCELUPDATE):
 		status = FAILURE;
