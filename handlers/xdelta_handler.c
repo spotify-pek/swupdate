@@ -270,7 +270,7 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
         return errno;
     }
 
-    handle->patch_file_remaining -= read_size;
+    handle->patch_file_remaining -= patch_bytes_read;
 
     INFO("Read %u bytes from patch...", patch_bytes_read);
 
@@ -279,7 +279,7 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
         xd3_set_flags(stream, XD3_FLUSH | stream->flags);
     }
 
-    xd3_avail_input(stream, handle->patch_buf, read_size);
+    xd3_avail_input(stream, handle->patch_buf, patch_bytes_read);
     return 0;
 }
 
