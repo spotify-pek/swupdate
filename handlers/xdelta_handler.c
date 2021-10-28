@@ -257,6 +257,7 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
 
     // set flush flag if EOF has reached
     if (patch_bytes_read < handle->patch_buf_sz) {
+        INFO("Input EOF!")
         xd3_set_flags(stream, XD3_FLUSH | stream->flags);
     }
 
@@ -396,9 +397,13 @@ process:
             }
 
             case XD3_GOTHEADER:
+                INFO("process: XD3_GOTHEADER");
+                goto process;
             case XD3_WINSTART:
+                INFO("process: XD3_WINSTART");
+                goto process;
             case XD3_WINFINISH:
-                INFO("process: XD3_GOTHEADER, XD3_WINSTART, XD3_WINFINISH");
+                INFO("process: XD3_WINFINISH");
                 goto process;
 
             default:
