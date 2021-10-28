@@ -273,7 +273,7 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
         xd3_set_flags(stream, XD3_FLUSH | stream->flags);
     }
 
-    xd3_avail_input(stream, handle->patch_buf, patch_bytes_read);
+    xd3_avail_input(stream, handle->patch_buf, handle->patch_file_sz);
     return 0;
 }
 
