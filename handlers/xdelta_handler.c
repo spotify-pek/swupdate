@@ -256,7 +256,8 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
     }
 
     // set flush flag if EOF has reached
-    if (patch_bytes_read < handle->patch_buf_sz) {
+    // if (patch_bytes_read < handle->patch_buf_sz) {
+    if (feof(handle->patch_file)) {
         INFO("Input EOF!");
         xd3_set_flags(stream, XD3_FLUSH | stream->flags);
     }
