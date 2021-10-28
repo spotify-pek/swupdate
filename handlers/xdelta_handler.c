@@ -59,6 +59,7 @@ typedef struct handler_data {
     FILE* src_file;
     FILE* dst_file;
     FILE* patch_file;
+    long long patch_file_sz; /* defined as long long by swupdate */
     uint8_t* patch_buf; /* contains segments of patch file data */
     size_t patch_buf_sz; /* size of the patch segment buffer */
     size_t expected_dst_size; /* used for progress reporting */
@@ -243,11 +244,14 @@ open_files(img_type *img, handler_data* handle) {
         ERROR("Failed to open patch file fd %d name %s error %s", img->fdin, handle->patch_filename, strerror(errno));
         return errno;
     }
+    handle->patch_file_sz = img->size;
+
     return 0;
 }
 
 static int
 read_from_patch_file(handler_data* handle, xd3_stream* stream) {
+
     // Read patch file data
     size_t patch_bytes_read = fread(handle->patch_buf, sizeof(handle->patch_buf[0]), handle->patch_buf_sz, handle->patch_file);
     if (ferror(handle->patch_file)) {
@@ -256,6 +260,11 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
     }
 
     INFO("Read %u bytes from patch...", patch_bytes_read);
+
+    if (handle->patch_file_sz < handle->patch_buf_sz) {
+        INFO("Input EOF!");
+        xd3_set_flags(stream, XD3_FLUSH | stream->flags);
+    }
 
     // set flush flag if EOF has reached
     // if (patch_bytes_read < handle->patch_buf_sz) {
