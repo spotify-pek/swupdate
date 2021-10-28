@@ -373,10 +373,12 @@ process:
         xd3ret = xd3_decode_input(&stream);
         switch (xd3ret) {
             case XD3_INPUT: /* stream requires more input */            
+                INFO("process: XD3_INPUT");
                 continue;
 
             case XD3_OUTPUT: /* destimation ( aka "new" ) file segment is ready to be written */
             {
+                INFO("process: XD3_OUTPUT");
                 if ((ret = write_to_output_file(&handle, &stream)) != 0) {
                     goto cleanup;
                 }
@@ -386,6 +388,7 @@ process:
 
             case XD3_GETSRCBLK: /* need data from the source file */
             {
+                INFO("process: XD3_GETSRCBLK");
                 if ((ret = feed_src_block(&handle, &source)) != 0) {
                     goto cleanup;
                 }
@@ -395,6 +398,7 @@ process:
             case XD3_GOTHEADER:
             case XD3_WINSTART:
             case XD3_WINFINISH:
+                INFO("process: XD3_GOTHEADER, XD3_WINSTART, XD3_WINFINISH");
                 goto process;
 
             default:
