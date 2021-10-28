@@ -252,7 +252,7 @@ open_files(img_type *img, handler_data* handle) {
 static int
 read_from_patch_file(handler_data* handle, xd3_stream* stream) {
     if (handle->patch_file_remaining == 0) {
-        ERROR("Patch already read!!!")
+        ERROR("Patch already read!!!");
     }
 
     size_t read_size = handle->patch_buf_sz;
