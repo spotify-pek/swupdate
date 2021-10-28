@@ -255,6 +255,8 @@ read_from_patch_file(handler_data* handle, xd3_stream* stream) {
         return errno;
     }
 
+    INFO("Read %u bytes from patch...", patch_bytes_read);
+
     // set flush flag if EOF has reached
     // if (patch_bytes_read < handle->patch_buf_sz) {
     if (feof(handle->patch_file)) {
