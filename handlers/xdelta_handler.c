@@ -433,7 +433,7 @@ cleanup:
 
     if (handle.src_file) { fclose(handle.src_file); }
     if (handle.dst_file) { fclose(handle.dst_file); }
-    if (handle.patch_file) { fclose(handle.patch_file); }
+    //if (handle.patch_file) { fclose(handle.patch_file); }
     if (handle.patch_buf) { free(handle.patch_buf); }
     xd3_close_stream(&stream);
     xd3_free_stream(&stream);
