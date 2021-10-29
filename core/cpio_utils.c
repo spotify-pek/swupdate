@@ -504,7 +504,7 @@ int extract_cpio_header(int fd, struct filehdr *fhdr, unsigned long *offset)
 
 	if (fill_buffer(fd, buf, fhdr->namesize , offset, NULL, NULL) < 0)
 		return -EINVAL;
-    buf[fhdr->namesize] = '\0';
+	buf[fhdr->namesize] = '\0';
 	strncpy(fhdr->filename, (char *)buf, sizeof(fhdr->filename));
 
 	/* Skip filename padding, if any */
@@ -575,6 +575,7 @@ int extract_sw_description(int fd, const char *descfile, off_t *offs)
 int extract_img_from_cpio(int fd, unsigned long offset, struct filehdr *fdh)
 {
 
+    INFO("fd: %d, offset: %u", fd, offset);
 	if (lseek(fd, offset, SEEK_SET) < 0) {
 		ERROR("CPIO file corrupted : %s",
 		strerror(errno));
