@@ -397,7 +397,6 @@ process:
 
             case XD3_OUTPUT: /* destimation ( aka "new" ) file segment is ready to be written */
             {
-                INFO("process: XD3_OUTPUT");
                 if ((ret = write_to_output_file(&handle, &stream)) != 0) {
                     goto cleanup;
                 }
@@ -407,7 +406,6 @@ process:
 
             case XD3_GETSRCBLK: /* need data from the source file */
             {
-                INFO("process: XD3_GETSRCBLK");
                 if ((ret = feed_src_block(&handle, &source)) != 0) {
                     goto cleanup;
                 }
@@ -415,13 +413,8 @@ process:
             }
 
             case XD3_GOTHEADER:
-                INFO("process: XD3_GOTHEADER");
-                goto process;
             case XD3_WINSTART:
-                INFO("process: XD3_WINSTART");
-                goto process;
             case XD3_WINFINISH:
-                INFO("process: XD3_WINFINISH");
                 goto process;
 
             default:
